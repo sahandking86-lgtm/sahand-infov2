@@ -1,0 +1,2269 @@
+import SwiftUI
+import UIKit
+import UniformTypeIdentifiers
+
+// MARK: - Design System
+
+private enum Layout {
+    static let cornerRadius: CGFloat = 20
+}
+
+enum AppTheme: String, CaseIterable, Identifiable, Codable {
+    case classic, sunset, forest, ocean, rose, amber, mint, berry, slate, plum
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .classic: return "Classic"
+        case .sunset: return "Sunset"
+        case .forest: return "Forest"
+        case .ocean: return "Ocean"
+        case .rose: return "Rose"
+        case .amber: return "Amber"
+        case .mint: return "Mint"
+        case .berry: return "Berry"
+        case .slate: return "Slate"
+        case .plum: return "Plum"
+        }
+    }
+
+    var startColor: Color {
+        switch self {
+        case .classic: return Color(red: 0.40, green: 0.36, blue: 0.98)
+        case .sunset: return Color(red: 0.98, green: 0.42, blue: 0.32)
+        case .forest: return Color(red: 0.13, green: 0.50, blue: 0.36)
+        case .ocean: return Color(red: 0.10, green: 0.50, blue: 0.78)
+        case .rose: return Color(red: 0.90, green: 0.36, blue: 0.56)
+        case .amber: return Color(red: 0.95, green: 0.65, blue: 0.10)
+        case .mint: return Color(red: 0.10, green: 0.70, blue: 0.55)
+        case .berry: return Color(red: 0.55, green: 0.10, blue: 0.35)
+        case .slate: return Color(red: 0.30, green: 0.36, blue: 0.44)
+        case .plum: return Color(red: 0.45, green: 0.20, blue: 0.55)
+        }
+    }
+
+    var endColor: Color {
+        switch self {
+        case .classic: return Color(red: 0.72, green: 0.34, blue: 0.86)
+        case .sunset: return Color(red: 0.98, green: 0.72, blue: 0.24)
+        case .forest: return Color(red: 0.42, green: 0.78, blue: 0.44)
+        case .ocean: return Color(red: 0.40, green: 0.80, blue: 0.86)
+        case .rose: return Color(red: 0.98, green: 0.62, blue: 0.70)
+        case .amber: return Color(red: 0.99, green: 0.84, blue: 0.35)
+        case .mint: return Color(red: 0.55, green: 0.92, blue: 0.78)
+        case .berry: return Color(red: 0.85, green: 0.30, blue: 0.55)
+        case .slate: return Color(red: 0.58, green: 0.66, blue: 0.74)
+        case .plum: return Color(red: 0.72, green: 0.48, blue: 0.82)
+        }
+    }
+
+    var gradient: LinearGradient {
+        LinearGradient(colors: [startColor, endColor], startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+}
+
+/// Soft card: gentle fill, wide diffuse shadow, and a hairline border so cards
+/// stay visible in dark mode too.
+private struct CardBackground: ViewModifier {
+    var cornerRadius: CGFloat = Layout.cornerRadius
+
+    func body(content: Content) -> some View {
+        content
+            .background(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(Color(.secondarySystemGroupedBackground))
+                    .shadow(color: .black.opacity(0.05), radius: 14, x: 0, y: 6)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.05), lineWidth: 1)
+            )
+    }
+}
+
+extension View {
+    func cardBackground(cornerRadius: CGFloat = Layout.cornerRadius) -> some View {
+        modifier(CardBackground(cornerRadius: cornerRadius))
+    }
+}
+
+/// Soft out-of-focus theme-colored glows floating over the system grouped background.
+/// Gives every tab a modern, ambient feel that follows the user's chosen theme.
+private struct AmbientBackground: View {
+    @EnvironmentObject private var settings: SettingsStore
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack {
+                Color(.systemGroupedBackground)
+                Circle()
+                    .fill(settings.theme.startColor.opacity(0.13))
+                    .frame(width: 340, height: 340)
+                    .blur(radius: 90)
+                    .position(x: proxy.size.width * 0.12, y: proxy.size.height * 0.10)
+                Circle()
+                    .fill(settings.theme.endColor.opacity(0.11))
+                    .frame(width: 380, height: 380)
+                    .blur(radius: 110)
+                    .position(x: proxy.size.width * 0.95, y: proxy.size.height * 0.30)
+            }
+        }
+        .ignoresSafeArea()
+    }
+}
+
+/// A capsule toggle used for category chips and reminder filters — filled with the
+/// theme gradient when selected, quiet card-style when not.
+private struct SelectablePill: View {
+    @EnvironmentObject private var settings: SettingsStore
+    let title: String
+    var systemImage: String? = nil
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                if let systemImage {
+                    Image(systemName: systemImage)
+                        .font(.caption.weight(.semibold))
+                }
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .foregroundStyle(isSelected ? Color.white : Color.primary)
+            .background {
+                Capsule()
+                    .fill(isSelected
+                          ? AnyShapeStyle(settings.theme.gradient)
+                          : AnyShapeStyle(Color(.secondarySystemGroupedBackground)))
+                    .shadow(color: isSelected ? settings.theme.endColor.opacity(0.35) : .clear, radius: 8, x: 0, y: 4)
+            }
+            .overlay {
+                Capsule()
+                    .strokeBorder(Color.primary.opacity(isSelected ? 0 : 0.07), lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// Horizontally scrolling "All + each category" chips row shared by the Notes and Date tabs.
+private struct CategoryChipsRow: View {
+    let categories: [String]
+    @Binding var selection: String?
+    var allLabel: String = "All"
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                SelectablePill(title: allLabel, isSelected: selection == nil) { selection = nil }
+                ForEach(categories, id: \.self) { category in
+                    SelectablePill(title: category, isSelected: selection == category) { selection = category }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+        }
+    }
+}
+
+/// Little spring when a button is pressed — used on the FAB and the send button.
+private struct ScaleButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.9 : 1)
+            .opacity(configuration.isPressed ? 0.85 : 1)
+            .animation(.snappy(duration: 0.2), value: configuration.isPressed)
+    }
+}
+
+/// Three bouncing dots shown while the AI is thinking, instead of a static "Thinking…" label.
+private struct TypingIndicator: View {
+    @State private var isAnimating = false
+
+    var body: some View {
+        HStack {
+            HStack(spacing: 5) {
+                ForEach(0..<3, id: \.self) { index in
+                    Circle()
+                        .fill(Color.secondary)
+                        .frame(width: 7, height: 7)
+                        .scaleEffect(isAnimating ? 1 : 0.55)
+                        .opacity(isAnimating ? 1 : 0.35)
+                        .animation(
+                            .easeInOut(duration: 0.55).repeatForever().delay(Double(index) * 0.15),
+                            value: isAnimating
+                        )
+                }
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 13)
+            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            Spacer(minLength: 48)
+        }
+        .onAppear { isAnimating = true }
+    }
+}
+
+private let relativeDateFormatter: RelativeDateTimeFormatter = {
+    let formatter = RelativeDateTimeFormatter()
+    formatter.unitsStyle = .abbreviated
+    return formatter
+}()
+
+private let absoluteDateFormatter: DateFormatter = {
+    let formatter = DateFormatter()
+    formatter.dateStyle = .medium
+    formatter.timeStyle = .short
+    return formatter
+}()
+
+// MARK: - Model
+
+struct Note: Identifiable, Codable, Equatable {
+    var id: UUID = UUID()
+    var title: String
+    var body: String
+    var categoryEnglish: String = ""
+    var categoryKurdish: String = ""
+    var reminderDate: Date? = nil
+    var isReminderCompleted: Bool = false
+    var dateCreated: Date = Date()
+    var dateModified: Date = Date()
+
+    init(title: String, body: String) {
+        self.title = title
+        self.body = body
+    }
+
+    // Custom decoding so older exported backups (made before categories/reminders existed)
+    // still import cleanly — Swift's auto-synthesized Decodable does NOT fall back to a
+    // property's default value when a key is simply missing from the JSON; it would throw
+    // instead. Every field added after the original title/body/dateCreated/dateModified is
+    // decoded as optional here, defaulting exactly like a freshly created Note would.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        title = try container.decode(String.self, forKey: .title)
+        body = try container.decode(String.self, forKey: .body)
+        categoryEnglish = try container.decodeIfPresent(String.self, forKey: .categoryEnglish) ?? ""
+        categoryKurdish = try container.decodeIfPresent(String.self, forKey: .categoryKurdish) ?? ""
+        reminderDate = try container.decodeIfPresent(Date.self, forKey: .reminderDate)
+        isReminderCompleted = try container.decodeIfPresent(Bool.self, forKey: .isReminderCompleted) ?? false
+        dateCreated = try container.decodeIfPresent(Date.self, forKey: .dateCreated) ?? Date()
+        dateModified = try container.decodeIfPresent(Date.self, forKey: .dateModified) ?? Date()
+    }
+}
+
+extension Note {
+    var previewText: String {
+        let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "No additional text" }
+        return trimmed.replacingOccurrences(of: "\n", with: " ")
+    }
+}
+
+// MARK: - Notes persistence
+
+final class NotesStore: ObservableObject {
+    @Published var notes: [Note] = [] {
+        didSet { save() }
+    }
+
+    private let storageKey = "sahand_info_notes_v1"
+
+    init() {
+        load()
+        if notes.isEmpty {
+            notes = [
+                Note(
+                    title: "Welcome",
+                    body: "This is your first note. Tap the pencil icon to edit it, or tap + on the Notes tab to add a new one.\n\nTry writing something like:\n10/10/2025 Abc Restaurant entry = 20$\n\nThen go to the Ask tab and type: how much does abc restaurant entry cost?"
+                )
+            ]
+        }
+    }
+
+    func add(_ note: Note) {
+        notes.append(note)
+    }
+
+    func update(_ note: Note) {
+        guard let index = notes.firstIndex(where: { $0.id == note.id }) else { return }
+        notes[index] = note
+    }
+
+    func delete(ids: [UUID]) {
+        notes.removeAll { ids.contains($0.id) }
+    }
+
+    private func save() {
+        if let data = try? JSONEncoder().encode(notes) {
+            UserDefaults.standard.set(data, forKey: storageKey)
+        }
+    }
+
+    private func load() {
+        guard let data = UserDefaults.standard.data(forKey: storageKey),
+              let decoded = try? JSONDecoder().decode([Note].self, from: data) else { return }
+        notes = decoded
+    }
+}
+
+// MARK: - Settings
+
+enum AnswerMode: String, Codable, CaseIterable, Identifiable {
+    case aiAnswer
+    case jumpAndHighlight
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .aiAnswer: return "AI Answer"
+        case .jumpAndHighlight: return "Jump & Highlight"
+        }
+    }
+
+    var explanation: String {
+        switch self {
+        case .aiAnswer:
+            return "Shows a short written answer plus a tappable note card."
+        case .jumpAndHighlight:
+            return "Jumps straight into the matching note and highlights the answer."
+        }
+    }
+}
+
+final class SettingsStore: ObservableObject {
+    @Published var answerMode: AnswerMode {
+        didSet {
+            UserDefaults.standard.set(answerMode.rawValue, forKey: storageKey)
+        }
+    }
+
+    @Published var useOnlineAI: Bool {
+        didSet {
+            UserDefaults.standard.set(useOnlineAI, forKey: onlineStorageKey)
+        }
+    }
+
+    @Published var deepSeekAPIKey: String {
+        didSet {
+            UserDefaults.standard.set(deepSeekAPIKey, forKey: apiKeyStorageKey)
+        }
+    }
+
+    @Published var notePattern: String {
+        didSet {
+            UserDefaults.standard.set(notePattern, forKey: notePatternStorageKey)
+        }
+    }
+
+    @Published var theme: AppTheme {
+        didSet {
+            UserDefaults.standard.set(theme.rawValue, forKey: themeStorageKey)
+        }
+    }
+
+    private let storageKey = "sahand_info_answer_mode_v1"
+    private let onlineStorageKey = "sahand_info_use_online_ai_v1"
+    private let apiKeyStorageKey = "sahand_info_deepseek_api_key_v1"
+    private let notePatternStorageKey = "sahand_info_note_pattern_v1"
+    private let themeStorageKey = "sahand_info_theme_v1"
+
+    init() {
+        if let raw = UserDefaults.standard.string(forKey: storageKey),
+           let mode = AnswerMode(rawValue: raw) {
+            answerMode = mode
+        } else {
+            answerMode = .aiAnswer
+        }
+        useOnlineAI = UserDefaults.standard.bool(forKey: onlineStorageKey)
+        deepSeekAPIKey = UserDefaults.standard.string(forKey: apiKeyStorageKey) ?? ""
+        notePattern = UserDefaults.standard.string(forKey: notePatternStorageKey) ?? ""
+        if let rawTheme = UserDefaults.standard.string(forKey: themeStorageKey),
+           let savedTheme = AppTheme(rawValue: rawTheme) {
+            theme = savedTheme
+        } else {
+            theme = .classic
+        }
+    }
+}
+
+// MARK: - Question answering engine
+
+struct AnswerResult: Equatable {
+    let matchedNote: Note
+    let matchedLine: String
+    let extractedAnswer: String
+    let sentence: String
+}
+
+enum QuestionAnswerer {
+
+    static let stopWords: Set<String> = [
+        "the", "a", "an", "is", "are", "was", "were", "do", "does", "did",
+        "how", "what", "when", "where", "who", "why", "which", "much", "many",
+        "of", "for", "in", "on", "at", "to", "and", "or", "i", "you", "it",
+        "this", "that", "my", "your", "me", "will", "can", "could", "would",
+        "should", "about", "tell"
+    ]
+
+    static let synonyms: [String: Set<String>] = [
+        "cost": ["cost", "costs", "price", "prices", "fee", "fees", "charge", "charges", "entry", "amount", "paid", "pay", "expensive"],
+        "price": ["price", "cost", "costs", "fee", "charge", "amount"],
+        "when": ["when", "date", "day", "time", "last"],
+        "date": ["date", "day", "when", "time"],
+        "phone": ["phone", "number", "call", "contact"],
+        "where": ["where", "location", "address", "place"],
+        "who": ["who", "name", "person"]
+    ]
+
+    static let moneyHints: Set<String> = ["cost", "costs", "price", "prices", "fee", "fees", "charge", "charges", "dollar", "dollars", "usd", "pay", "paid", "expensive", "amount"]
+    static let dateHints: Set<String> = ["when", "date", "day", "time", "last"]
+    static let phoneHints: Set<String> = ["phone", "call", "contact"]
+    static let percentHints: Set<String> = ["percent", "percentage", "rate"]
+
+    // Hoisted so extraction and line-scoring share the same pattern set.
+    static let moneyPatterns = [
+        #"\$\s?\d+(?:[.,]\d+)?"#,
+        #"\d+(?:[.,]\d+)?\s?(?:\$|dollars|usd)"#
+    ]
+    static let percentPatterns = [#"\d+(?:\.\d+)?\s?%"#]
+    static let datePatterns = [#"\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}"#]
+    static let phonePatterns = [#"\d{3}[-.\s]?\d{3}[-.\s]?\d{4}"#]
+    static let numberPatterns = [#"\d+(?:\.\d+)?"#]
+
+    /// What kind of value the question is actually asking for. Knowing this lets
+    /// extraction go straight for the right pattern in the line — a date, a price, a
+    /// phone number — instead of guessing from position (e.g. "whatever's after the
+    /// '=' sign"), which breaks the moment a line has more than one kind of value on it.
+    enum ValueCategory {
+        case date, phone, percent, money, generic
+    }
+
+    static func tokenize(_ text: String) -> [String] {
+        let lowered = text.lowercased()
+        var cleaned = ""
+        for scalar in lowered.unicodeScalars {
+            if CharacterSet.alphanumerics.contains(scalar) {
+                cleaned.unicodeScalars.append(scalar)
+            } else {
+                cleaned.append(" ")
+            }
+        }
+        return cleaned.split(separator: " ").map(String.init)
+    }
+
+    static func expand(_ tokens: [String]) -> Set<String> {
+        var expanded = Set(tokens)
+        for token in tokens {
+            if let related = synonyms[token] {
+                expanded.formUnion(related)
+            }
+        }
+        return expanded
+    }
+
+    /// Date is checked first: "when", "last [time]" etc. are unambiguous asks for a
+    /// date, and should win even when the matched line also happens to contain a price.
+    static func expectedCategory(for hints: Set<String>) -> ValueCategory {
+        if !hints.isDisjoint(with: dateHints) { return .date }
+        if !hints.isDisjoint(with: phoneHints) { return .phone }
+        if !hints.isDisjoint(with: percentHints) { return .percent }
+        if !hints.isDisjoint(with: moneyHints) { return .money }
+        return .generic
+    }
+
+    static func regexPatterns(for category: ValueCategory) -> [String] {
+        switch category {
+        case .date: return datePatterns
+        case .phone: return phonePatterns
+        case .percent: return percentPatterns
+        case .money: return moneyPatterns
+        case .generic: return []
+        }
+    }
+
+    static func firstMatch(of patterns: [String], in line: String) -> String? {
+        for pattern in patterns {
+            if let range = line.range(of: pattern, options: [.regularExpression, .caseInsensitive]) {
+                return String(line[range])
+            }
+        }
+        return nil
+    }
+
+    static func topMatchingNotes(for question: String, in notes: [Note], limit: Int = 3) -> [Note] {
+        let rawTokens = tokenize(question)
+        let questionTokens = rawTokens.filter { !stopWords.contains($0) }
+        guard !questionTokens.isEmpty else { return [] }
+        let expandedQuestionTokens = expand(questionTokens)
+
+        let scored: [(Note, Double)] = notes.compactMap { note in
+            let noteTokens = tokenize(note.title + " " + note.body)
+            guard !noteTokens.isEmpty else { return nil }
+            let overlap = expandedQuestionTokens.intersection(Set(noteTokens)).count
+            guard overlap > 0 else { return nil }
+            return (note, Double(overlap) / Double(noteTokens.count).squareRoot())
+        }
+        return scored.sorted { $0.1 > $1.1 }.prefix(limit).map { $0.0 }
+    }
+
+    /// Finds which existing note an AI command like "update the X note" or "delete X" is referring to.
+    static func bestMatchingNote(for target: String, in notes: [Note]) -> Note? {
+        let trimmedTarget = target.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !trimmedTarget.isEmpty else { return nil }
+
+        if let exact = notes.first(where: { $0.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == trimmedTarget }) {
+            return exact
+        }
+        if let contains = notes.first(where: {
+            !$0.title.isEmpty && ($0.title.lowercased().contains(trimmedTarget) || trimmedTarget.contains($0.title.lowercased()))
+        }) {
+            return contains
+        }
+        return topMatchingNotes(for: target, in: notes, limit: 1).first
+    }
+
+    static func answer(for question: String, in notes: [Note]) -> AnswerResult? {
+        let rawTokens = tokenize(question)
+        let questionTokens = rawTokens.filter { !stopWords.contains($0) }
+        guard !questionTokens.isEmpty else { return nil }
+        let expandedQuestionTokens = expand(questionTokens)
+        let category = expectedCategory(for: expandedQuestionTokens)
+
+        // Pick the best matching note, normalized by note length so a short, focused
+        // note isn't drowned out by a long note that merely shares a few words.
+        var bestNote: Note? = nil
+        var bestNoteScore = 0.0
+
+        for note in notes {
+            let noteTokens = tokenize(note.title + " " + note.body)
+            guard !noteTokens.isEmpty else { continue }
+            let noteTokenSet = Set(noteTokens)
+            let overlap = expandedQuestionTokens.intersection(noteTokenSet).count
+            guard overlap > 0 else { continue }
+            let normalized = Double(overlap) / Double(noteTokens.count).squareRoot()
+            if normalized > bestNoteScore {
+                bestNoteScore = normalized
+                bestNote = note
+            }
+        }
+
+        guard let matchedNote = bestNote else { return nil }
+
+        let lines = matchedNote.body
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .map(String.init)
+        let candidateLines = lines.isEmpty ? [matchedNote.body] : lines
+
+        // Score each line by keyword overlap, with a strong boost for a line that
+        // actually contains the kind of value being asked about — so "when did I go"
+        // picks the line with a date on it even if a different line mentions the
+        // restaurant more times, and even if that same line also has a price on it.
+        var bestLine = candidateLines[0]
+        var bestLineScore = -1.0
+        for line in candidateLines {
+            let lineTokens = Set(tokenize(line))
+            var score = Double(expandedQuestionTokens.intersection(lineTokens).count)
+            if category != .generic, firstMatch(of: regexPatterns(for: category), in: line) != nil {
+                score += 1.0
+            }
+            if score > bestLineScore {
+                bestLineScore = score
+                bestLine = line
+            }
+        }
+
+        let extracted = extractAnswerValue(from: bestLine, category: category, hints: expandedQuestionTokens)
+
+        let title = matchedNote.title.isEmpty ? "Untitled" : matchedNote.title
+        let sentence = "From the \"\(title)\" note: \(extracted)"
+
+        return AnswerResult(
+            matchedNote: matchedNote,
+            matchedLine: bestLine,
+            extractedAnswer: extracted,
+            sentence: sentence
+        )
+    }
+
+    /// Picks the value out of the matched line. If the question clearly signals a
+    /// specific kind of value (a date, a phone number, a price, a percentage), that
+    /// exact pattern is searched for directly, wherever it sits in the line — this is
+    /// what makes "when did I go" return the date even when a price sits right next to
+    /// it. Only when the question doesn't signal a specific type do we fall back to
+    /// reading whatever follows a "label = value" style delimiter, and finally to any
+    /// number-shaped token in the line as a last resort.
+    static func extractAnswerValue(from line: String, category: ValueCategory, hints: Set<String>) -> String {
+        if category != .generic, let typed = firstMatch(of: regexPatterns(for: category), in: line) {
+            return typed
+        }
+        if let structured = extractStructuredValue(from: line, hints: hints) {
+            return structured
+        }
+        let fallbackPatterns = datePatterns + moneyPatterns + percentPatterns + phonePatterns + numberPatterns
+        if let anyValue = firstMatch(of: fallbackPatterns, in: line) {
+            return anyValue
+        }
+        return line.trimmingCharacters(in: .whitespaces)
+    }
+
+    /// Parses simple "Label = Value" / "Label: Value" / "Label - Value" notes and
+    /// returns the value directly when the label matches what's being asked about.
+    /// Used only once a specific value type has already been ruled out, since a plain
+    /// label/value split can't tell a date sitting in the label from a price in the
+    /// value — that distinction is what regexPatterns(for:) above is for.
+    static func extractStructuredValue(from line: String, hints: Set<String>) -> String? {
+        let delimiters = ["=", ":", " - ", " – "]
+        for delimiter in delimiters {
+            guard let range = line.range(of: delimiter) else { continue }
+            let label = String(line[line.startIndex..<range.lowerBound])
+            let value = String(line[range.upperBound...]).trimmingCharacters(in: .whitespaces)
+            guard !value.isEmpty else { continue }
+            let labelTokens = Set(tokenize(label))
+            guard !labelTokens.isEmpty, !labelTokens.isDisjoint(with: hints) else { continue }
+            return value
+        }
+        return nil
+    }
+}
+
+// MARK: - Notes list
+
+struct NotesListView: View {
+    @EnvironmentObject var notesStore: NotesStore
+    @EnvironmentObject var settings: SettingsStore
+    @State private var path: [NoteDestination] = []
+    @State private var searchText = ""
+    @State private var didTapAdd = false
+    @State private var showingSettings = false
+    @State private var categoryFilter: String? = nil
+
+    struct NoteDestination: Hashable {
+        let id: UUID
+        var startEditing: Bool = false
+    }
+
+    private var sortedNotes: [Note] {
+        notesStore.notes.sorted { $0.dateModified > $1.dateModified }
+    }
+
+    private var availableCategories: [String] {
+        Set(notesStore.notes.map { $0.categoryEnglish }.filter { !$0.isEmpty }).sorted()
+    }
+
+    private var filteredNotes: [Note] {
+        var base = sortedNotes
+        if let categoryFilter {
+            base = base.filter { $0.categoryEnglish == categoryFilter }
+        }
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else { return base }
+        return base.filter {
+            $0.title.lowercased().contains(query) || $0.body.lowercased().contains(query)
+        }
+    }
+
+    var body: some View {
+        NavigationStack(path: $path) {
+            ZStack(alignment: .bottomTrailing) {
+                VStack(spacing: 0) {
+                    if !availableCategories.isEmpty {
+                        CategoryChipsRow(categories: availableCategories, selection: $categoryFilter, allLabel: "All Notes")
+                    }
+
+                    Group {
+                        if sortedNotes.isEmpty {
+                            ContentUnavailableView {
+                                Label("No Notes Yet", systemImage: "note.text")
+                            } description: {
+                                Text("Tap the button below to create your first note.")
+                            }
+                        } else if filteredNotes.isEmpty {
+                            ContentUnavailableView.search(text: searchText)
+                        } else {
+                            List {
+                                ForEach(filteredNotes) { note in
+                                    NavigationLink(value: NoteDestination(id: note.id)) {
+                                        NoteRowView(note: note)
+                                    }
+                                    .listRowSeparator(.hidden)
+                                    .listRowBackground(Color.clear)
+                                    .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                        Button(role: .destructive) {
+                                            delete(note)
+                                        } label: {
+                                            Label("Delete", systemImage: "trash")
+                                        }
+                                    }
+                                }
+                            }
+                            .listStyle(.plain)
+                            .scrollContentBackground(.hidden)
+                            .animation(.snappy, value: filteredNotes)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+
+                // Always visible — previously this hid whenever the notes list
+                // was empty, even though the empty-state message told people to
+                // "tap the button below" to create their first note.
+                Button(action: addNewNote) {
+                    Image(systemName: "plus")
+                        .font(.title2.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 60, height: 60)
+                        .background(settings.theme.gradient, in: Circle())
+                        .shadow(color: settings.theme.endColor.opacity(0.45), radius: 14, x: 0, y: 7)
+                }
+                .buttonStyle(ScaleButtonStyle())
+                .padding(.trailing, 20)
+                .padding(.bottom, 20)
+                .sensoryFeedback(.impact(weight: .medium), trigger: didTapAdd)
+            }
+            .background(AmbientBackground())
+            .navigationTitle("Notes")
+            .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search notes")
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button {
+                        showingSettings = true
+                    } label: {
+                        Image(systemName: "gearshape")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.white)
+                            .frame(width: 32, height: 32)
+                            .background(settings.theme.gradient, in: Circle())
+                    }
+                }
+            }
+            .sheet(isPresented: $showingSettings) {
+                SettingsView()
+            }
+            .navigationDestination(for: NoteDestination.self) { dest in
+                NoteDetailView(noteID: dest.id, startInEditMode: dest.startEditing)
+            }
+        }
+    }
+
+    private func addNewNote() {
+        didTapAdd.toggle()
+        let newNote = Note(title: "", body: "")
+        notesStore.add(newNote)
+        path.append(NoteDestination(id: newNote.id, startEditing: true))
+    }
+
+    private func delete(_ note: Note) {
+        withAnimation(.snappy) {
+            notesStore.delete(ids: [note.id])
+        }
+    }
+}
+
+struct NoteRowView: View {
+    @EnvironmentObject var settings: SettingsStore
+    let note: Note
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 8) {
+                Text(note.title.isEmpty ? "Untitled" : note.title)
+                    .font(.headline)
+                    .fontDesign(.rounded)
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+
+                Spacer(minLength: 0)
+
+                if note.reminderDate != nil {
+                    Image(systemName: note.isReminderCompleted ? "checkmark.circle.fill" : "bell.fill")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(note.isReminderCompleted ? Color.secondary : settings.theme.endColor)
+                }
+            }
+
+            Text(note.previewText)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+
+            HStack(spacing: 8) {
+                if !note.categoryEnglish.isEmpty {
+                    Text(note.categoryKurdish.isEmpty ? note.categoryEnglish : "\(note.categoryEnglish) · \(note.categoryKurdish)")
+                        .font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(settings.theme.endColor.opacity(0.14), in: Capsule())
+                        .foregroundStyle(settings.theme.endColor)
+                }
+
+                Spacer(minLength: 0)
+
+                Text(relativeDateFormatter.localizedString(for: note.dateModified, relativeTo: Date()))
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .padding(16)
+        .cardBackground()
+    }
+}
+
+// MARK: - Note detail / editor
+
+struct NoteDetailView: View {
+    @EnvironmentObject var notesStore: NotesStore
+    @EnvironmentObject var settings: SettingsStore
+    let noteID: UUID
+    var highlightText: String? = nil
+    var highlightColor: Color = Color(red: 1.0, green: 0.8, blue: 0.2)
+    var startInEditMode: Bool = false
+
+    @State private var isEditing = false
+    @State private var draftTitle = ""
+    @State private var draftBody = ""
+    @State private var didSave = false
+    @State private var autoCategorizeTask: Task<Void, Never>? = nil
+    @FocusState private var focusedField: Field?
+
+    private enum Field: Hashable {
+        case title, body
+    }
+
+    private var note: Note? {
+        notesStore.notes.first(where: { $0.id == noteID })
+    }
+
+    var body: some View {
+        Group {
+            if let note {
+                Group {
+                    if isEditing {
+                        editingView
+                    } else {
+                        readingView(note: note)
+                    }
+                }
+                .background(AmbientBackground())
+                .navigationTitle(isEditing ? "Edit Note" : "")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button {
+                            handleToolbarTap(note: note)
+                        } label: {
+                            Text(isEditing ? "Save" : "Edit")
+                                .fontWeight(.semibold)
+                        }
+                    }
+                    ToolbarItemGroup(placement: .keyboard) {
+                        Spacer()
+                        Button("Done") { focusedField = nil }
+                            .fontWeight(.semibold)
+                    }
+                }
+                .sensoryFeedback(.success, trigger: didSave)
+                .onAppear {
+                    guard startInEditMode, !isEditing else { return }
+                    draftTitle = note.title
+                    draftBody = note.body
+                    isEditing = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                        focusedField = .title
+                    }
+                }
+                .onDisappear {
+                    // Bug fix: tapping "+" creates a real, empty note right away so it
+                    // can be navigated to in edit mode. Previously, backing out of that
+                    // screen without tapping "Save" left a permanent blank "Untitled"
+                    // note behind. Now an abandoned brand-new note is discarded instead.
+                    guard startInEditMode, isEditing else { return }
+                    let emptyTitle = draftTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    let emptyBody = draftBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    if emptyTitle && emptyBody {
+                        notesStore.delete(ids: [noteID])
+                    }
+                }
+            } else {
+                ContentUnavailableView("Note Not Found", systemImage: "exclamationmark.triangle")
+            }
+        }
+    }
+
+    private var editingView: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            TextField("Title", text: $draftTitle)
+                .font(.system(.title2, design: .rounded, weight: .bold))
+                .focused($focusedField, equals: .title)
+                .submitLabel(.next)
+                .onSubmit { focusedField = .body }
+                .padding(.horizontal, 20)
+                .padding(.top, 16)
+
+            // A soft fading gradient instead of a hard system Divider — feels less
+            // like a form field and more like part of the note.
+            LinearGradient(
+                colors: [settings.theme.endColor.opacity(0.4), settings.theme.startColor.opacity(0.05)],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+            .frame(height: 2)
+            .clipShape(Capsule())
+            .padding(.horizontal, 20)
+
+            ZStack(alignment: .topLeading) {
+                if draftBody.isEmpty {
+                    Text("Start writing…")
+                        .foregroundStyle(.tertiary)
+                        .padding(.top, 8)
+                        .padding(.leading, 5)
+                        .allowsHitTesting(false)
+                }
+                TextEditor(text: $draftBody)
+                    .focused($focusedField, equals: .body)
+                    .scrollContentBackground(.hidden)
+            }
+            .font(.body)
+            .padding(.horizontal, 15)
+            .frame(maxHeight: .infinity)
+        }
+        .onChange(of: draftTitle) { _, _ in scheduleAutoCategorize() }
+        .onChange(of: draftBody) { _, _ in scheduleAutoCategorize() }
+    }
+
+    private func readingView(note: Note) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(note.title.isEmpty ? "Untitled" : note.title)
+                        .font(.system(.largeTitle, design: .rounded, weight: .bold))
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if !note.categoryEnglish.isEmpty {
+                        Text(note.categoryKurdish.isEmpty ? note.categoryEnglish : "\(note.categoryEnglish) · \(note.categoryKurdish)")
+                            .font(.caption.weight(.semibold))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .background(settings.theme.endColor.opacity(0.14), in: Capsule())
+                            .foregroundStyle(settings.theme.endColor)
+                    }
+                }
+
+                Text(highlightedAttributedString(body: note.body, highlight: highlightText, color: highlightColor))
+                    .font(.body)
+                    .lineSpacing(5)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("Created \(absoluteDateFormatter.string(from: note.dateCreated))", systemImage: "calendar")
+                    Label("Edited \(relativeDateFormatter.localizedString(for: note.dateModified, relativeTo: Date()))", systemImage: "clock")
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .cardBackground(cornerRadius: 16)
+                .padding(.top, 8)
+            }
+            .padding(20)
+        }
+        .scrollDismissesKeyboard(.interactively)
+    }
+
+    private func handleToolbarTap(note: Note) {
+        if isEditing {
+            saveDraft(originalNote: note)
+            focusedField = nil
+            didSave.toggle()
+        } else {
+            draftTitle = note.title
+            draftBody = note.body
+            focusedField = .title
+        }
+        withAnimation(.snappy) { isEditing.toggle() }
+    }
+
+    private func saveDraft(originalNote: Note) {
+        var updated = originalNote
+        updated.title = draftTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "Untitled"
+            : draftTitle
+        updated.body = draftBody
+        updated.dateModified = Date()
+        notesStore.update(updated)
+    }
+
+    /// While the user writes a note themselves, wait for a pause in typing, then have the
+    /// online AI suggest a bilingual category — but only if one isn't already set, and only
+    /// when online AI is actually configured. Never touches the offline model.
+    private func scheduleAutoCategorize() {
+        guard settings.useOnlineAI, !settings.deepSeekAPIKey.isEmpty else { return }
+        autoCategorizeTask?.cancel()
+
+        let titleSnapshot = draftTitle
+        let bodySnapshot = draftBody
+        let targetID = noteID
+
+        autoCategorizeTask = Task {
+            try? await Task.sleep(nanoseconds: 2_500_000_000)
+            guard !Task.isCancelled else { return }
+            guard let current = notesStore.notes.first(where: { $0.id == targetID }), current.categoryEnglish.isEmpty else { return }
+
+            guard let result = await OnlineAI.suggestCategory(title: titleSnapshot, body: bodySnapshot, apiKey: settings.deepSeekAPIKey) else { return }
+            guard !Task.isCancelled else { return }
+
+            // Re-fetch the latest note rather than reusing `current` — avoids clobbering
+            // a category the user or another action may have set in the meantime.
+            guard var latest = notesStore.notes.first(where: { $0.id == targetID }), latest.categoryEnglish.isEmpty else { return }
+            latest.categoryEnglish = result.en
+            latest.categoryKurdish = result.ku
+            notesStore.update(latest)
+        }
+    }
+
+    private func highlightedAttributedString(body: String, highlight: String?, color: Color) -> AttributedString {
+        guard let highlight, !highlight.isEmpty,
+              let stringRange = body.range(of: highlight, options: [.caseInsensitive]) else {
+            return AttributedString(body)
+        }
+
+        let prefix = String(body[body.startIndex..<stringRange.lowerBound])
+        let match = String(body[stringRange])
+        let suffix = String(body[stringRange.upperBound...])
+
+        var matchAttr = AttributedString(match)
+        matchAttr.backgroundColor = color.opacity(0.45)
+        matchAttr.foregroundColor = Color.primary
+
+        return AttributedString(prefix) + matchAttr + AttributedString(suffix)
+    }
+}
+
+// MARK: - Ask tab (chat-style)
+
+enum PendingUndoAction: Equatable {
+    case restoreNote(Note)
+    case removeNote(UUID)
+}
+
+/// A tappable chip for a note the AI drew its answer from, colored with a randomly assigned theme.
+struct SourceNoteChip: Identifiable, Equatable {
+    let id: UUID // the note's own id
+    let title: String
+    let theme: AppTheme
+}
+
+/// One piece of an AI answer, optionally tied to a source note (and colored to match its chip).
+struct ResolvedAnswerSegment: Identifiable, Equatable {
+    let id = UUID()
+    var text: String
+    var noteID: UUID?
+    var excerpt: String?
+    var theme: AppTheme?
+    var isValue: Bool = false
+}
+
+struct ChatMessage: Identifiable, Equatable {
+    enum Kind: Equatable {
+        case userQuestion(String)
+        case answerCard(AnswerResult)
+        case plainText(String)
+        case actionResult(text: String, undo: PendingUndoAction?)
+        case confirmDelete(note: Note)
+        case sourcedAnswer(chips: [SourceNoteChip], segments: [ResolvedAnswerSegment])
+    }
+
+    var id: UUID = UUID()
+    let kind: Kind
+}
+
+private struct ChatBubbleUser: View {
+    @EnvironmentObject var settings: SettingsStore
+    let text: String
+
+    var body: some View {
+        HStack {
+            Spacer(minLength: 48)
+            Text(text)
+                .font(.body)
+                .foregroundStyle(.white)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 11)
+                .background {
+                    UnevenRoundedRectangle(
+                        cornerRadii: .init(topLeading: 20, bottomLeading: 20, bottomTrailing: 6, topTrailing: 20),
+                        style: .continuous
+                    )
+                    .fill(settings.theme.gradient)
+                    .shadow(color: settings.theme.endColor.opacity(0.25), radius: 8, x: 0, y: 4)
+                }
+                .textSelection(.enabled)
+        }
+    }
+}
+
+private struct ChatBubbleAssistantPlain: View {
+    let text: String
+
+    var body: some View {
+        HStack {
+            Text(text)
+                .font(.body)
+                .foregroundStyle(.primary)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 11)
+                .background {
+                    UnevenRoundedRectangle(
+                        cornerRadii: .init(topLeading: 20, bottomLeading: 6, bottomTrailing: 20, topTrailing: 20),
+                        style: .continuous
+                    )
+                    .fill(Color(.secondarySystemGroupedBackground))
+                    .shadow(color: .black.opacity(0.04), radius: 6, x: 0, y: 3)
+                }
+            Spacer(minLength: 48)
+        }
+    }
+}
+
+/// A clean, themed box for a copyable answer value (password, code, price, etc.) with a tap-to-copy icon.
+private struct ValueCopyChip: View {
+    let text: String
+    let theme: AppTheme
+    @State private var didCopy = false
+
+    var body: some View {
+        Button {
+            UIPasteboard.general.string = text
+            withAnimation(.snappy) { didCopy = true }
+            Task {
+                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                withAnimation(.snappy) { didCopy = false }
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Text(text)
+                    .font(.system(.body, design: .monospaced).weight(.semibold))
+                    .foregroundStyle(.white)
+                Image(systemName: didCopy ? "checkmark.circle.fill" : "doc.on.doc")
+                    .font(.subheadline)
+                    .foregroundStyle(.white)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            .background(theme.gradient, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .shadow(color: theme.endColor.opacity(0.35), radius: 8, x: 0, y: 4)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct AskView: View {
+    @EnvironmentObject var notesStore: NotesStore
+    @EnvironmentObject var settings: SettingsStore
+
+    @State private var questionText = ""
+    @State private var messages: [ChatMessage] = []
+    @State private var path: [AskDestination] = []
+    @State private var didAsk = false
+    @State private var conversationHistory: [ConversationTurn] = []
+    @FocusState private var isInputFocused: Bool
+
+    private let suggestions = [
+        "How much did the restaurant cost?",
+        "Find a password in my notes",
+        "Create a new note for me"
+    ]
+
+    struct AskDestination: Hashable {
+        let noteID: UUID
+        let highlight: String?
+        var highlightColor: Color? = nil
+    }
+
+    var body: some View {
+        NavigationStack(path: $path) {
+            VStack(spacing: 0) {
+                Group {
+                    if messages.isEmpty {
+                        emptyState
+                    } else {
+                        chatScrollView
+                    }
+                }
+                // Tapping any empty space above the input bar dismisses the keyboard.
+                // simultaneousGesture (rather than onTapGesture) so buttons inside —
+                // the note chip, the trash icon — still register their own taps too.
+                .contentShape(Rectangle())
+                .simultaneousGesture(TapGesture().onEnded { dismissKeyboard() })
+
+                inputBar
+            }
+            .background(AmbientBackground())
+            .navigationTitle("Ask")
+            .navigationBarTitleDisplayMode(.inline)
+            .navigationDestination(for: AskDestination.self) { dest in
+                NoteDetailView(noteID: dest.noteID, highlightText: dest.highlight, highlightColor: dest.highlightColor ?? Color(red: 1.0, green: 0.8, blue: 0.2))
+            }
+            .toolbar {
+                if !messages.isEmpty {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button(role: .destructive) {
+                            withAnimation(.snappy) { messages.removeAll() }
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.title3)
+                                .symbolRenderingMode(.hierarchical)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            .sensoryFeedback(.selection, trigger: didAsk)
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 16) {
+            Spacer()
+            Image(systemName: "sparkles")
+                .font(.system(size: 28, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 76, height: 76)
+                .background(settings.theme.gradient, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+                .shadow(color: settings.theme.endColor.opacity(0.4), radius: 18, x: 0, y: 10)
+
+            Text("Ask your notes")
+                .font(.system(.title2, design: .rounded, weight: .bold))
+            Text("Get quick answers pulled straight from what you've written.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 40)
+
+            VStack(spacing: 8) {
+                ForEach(suggestions, id: \.self) { suggestion in
+                    Button {
+                        questionText = suggestion
+                        isInputFocused = true
+                    } label: {
+                        Text(suggestion)
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(.primary)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 9)
+                            .background(Color(.secondarySystemGroupedBackground), in: Capsule())
+                            .overlay(Capsule().strokeBorder(Color.primary.opacity(0.06), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.top, 6)
+
+            Spacer()
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var chatScrollView: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 14) {
+                    ForEach(messages) { message in
+                        messageView(for: message)
+                            .id(message.id)
+                    }
+                }
+                .padding(16)
+            }
+            .onChange(of: messages.count) { _, _ in
+                guard let lastID = messages.last?.id else { return }
+                withAnimation(.snappy) {
+                    proxy.scrollTo(lastID, anchor: .bottom)
+                }
+            }
+            .scrollDismissesKeyboard(.interactively)
+        }
+    }
+
+    @ViewBuilder
+    private func messageView(for message: ChatMessage) -> some View {
+        switch message.kind {
+        case .userQuestion(let text):
+            ChatBubbleUser(text: text)
+        case .answerCard(let result):
+            HStack(alignment: .top, spacing: 0) {
+                AnswerCardView(result: result) {
+                    path.append(AskDestination(noteID: result.matchedNote.id, highlight: result.extractedAnswer))
+                }
+                .frame(maxWidth: 320, alignment: .leading)
+                Spacer(minLength: 24)
+            }
+        case .plainText(let text):
+            if text == "Thinking…" {
+                TypingIndicator()
+            } else {
+                ChatBubbleAssistantPlain(text: text)
+            }
+        case .actionResult(let text, let undo):
+            VStack(alignment: .leading, spacing: 6) {
+                ChatBubbleAssistantPlain(text: text)
+                if let undo {
+                    HStack {
+                        Button {
+                            performUndo(undo)
+                        } label: {
+                            Label("Undo", systemImage: "arrow.uturn.backward")
+                                .font(.caption.weight(.semibold))
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        Spacer(minLength: 40)
+                    }
+                }
+            }
+        case .confirmDelete(let note):
+            VStack(alignment: .leading, spacing: 8) {
+                ChatBubbleAssistantPlain(text: "Delete \"\(note.title.isEmpty ? "Untitled" : note.title)\"? This can't be undone.")
+                HStack(spacing: 10) {
+                    Button(role: .destructive) {
+                        confirmPendingDelete(note: note, messageID: message.id)
+                    } label: {
+                        Text("Delete")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.red)
+                    .controlSize(.small)
+
+                    Button {
+                        cancelPendingDelete(messageID: message.id)
+                    } label: {
+                        Text("Keep it")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+
+                    Spacer(minLength: 24)
+                }
+            }
+        case .sourcedAnswer(let chips, let segments):
+            VStack(alignment: .leading, spacing: 10) {
+                if !chips.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(chips) { chip in
+                                Button {
+                                    openSourceNote(chip: chip, segments: segments)
+                                } label: {
+                                    Text(chip.title)
+                                        .font(.caption.weight(.semibold))
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 5)
+                                        .background(chip.theme.gradient, in: Capsule())
+                                        .foregroundStyle(.white)
+                                        .shadow(color: chip.theme.endColor.opacity(0.35), radius: 6, x: 0, y: 3)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.leading, 16)
+                    }
+                }
+
+                HStack {
+                    sourcedAnswerText(segments: segments)
+                        .font(.body)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 11)
+                        .background {
+                            UnevenRoundedRectangle(
+                                cornerRadii: .init(topLeading: 20, bottomLeading: 6, bottomTrailing: 20, topTrailing: 20),
+                                style: .continuous
+                            )
+                            .fill(Color(.secondarySystemGroupedBackground))
+                            .shadow(color: .black.opacity(0.04), radius: 6, x: 0, y: 3)
+                        }
+                        .textSelection(.enabled)
+                    Spacer(minLength: 24)
+                }
+
+                let valueSegments = segments.filter { $0.isValue }
+                if !valueSegments.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(valueSegments) { segment in
+                            ValueCopyChip(text: segment.text, theme: segment.theme ?? settings.theme)
+                        }
+                    }
+                    .padding(.leading, 16)
+                }
+            }
+        }
+    }
+
+    private func sourcedAnswerText(segments: [ResolvedAnswerSegment]) -> Text {
+        var result = AttributedString("")
+        for segment in segments {
+            var attr = AttributedString(segment.text)
+            if let theme = segment.theme {
+                attr.backgroundColor = theme.startColor.opacity(0.35)
+                attr.foregroundColor = Color.primary
+            }
+            result += attr
+        }
+        return Text(result)
+    }
+
+    private func openSourceNote(chip: SourceNoteChip, segments: [ResolvedAnswerSegment]) {
+        let excerpt = segments.first(where: { $0.noteID == chip.id })?.excerpt
+        path.append(AskDestination(noteID: chip.id, highlight: excerpt, highlightColor: chip.theme.startColor))
+    }
+
+    private func performUndo(_ undo: PendingUndoAction) {
+        switch undo {
+        case .restoreNote(let note):
+            notesStore.update(note)
+        case .removeNote(let id):
+            notesStore.delete(ids: [id])
+        }
+    }
+
+    private func confirmPendingDelete(note: Note, messageID: UUID) {
+        notesStore.delete(ids: [note.id])
+        if let index = messages.firstIndex(where: { $0.id == messageID }) {
+            withAnimation(.snappy) {
+                messages[index] = ChatMessage(id: messageID, kind: .plainText("Deleted \"\(note.title.isEmpty ? "Untitled" : note.title)\"."))
+            }
+        }
+    }
+
+    private func cancelPendingDelete(messageID: UUID) {
+        if let index = messages.firstIndex(where: { $0.id == messageID }) {
+            withAnimation(.snappy) {
+                messages[index] = ChatMessage(id: messageID, kind: .plainText("Okay, kept it."))
+            }
+        }
+    }
+
+    private var inputBar: some View {
+        HStack(alignment: .bottom, spacing: 10) {
+            TextField("Ask something…", text: $questionText, axis: .vertical)
+                .lineLimit(1...4)
+                .focused($isInputFocused)
+                .submitLabel(.send)
+                .onSubmit(sendQuestion)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 11)
+                .background(Color(.secondarySystemGroupedBackground), in: Capsule())
+                .overlay {
+                    Capsule()
+                        .strokeBorder(settings.theme.gradient, lineWidth: 1.5)
+                        .opacity(isInputFocused ? 1 : 0)
+                        .animation(.snappy, value: isInputFocused)
+                }
+
+            Button(action: sendQuestion) {
+                Image(systemName: "arrow.up")
+                    .font(.headline.weight(.bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 38, height: 38)
+                    .background(settings.theme.gradient, in: Circle())
+                    .shadow(color: settings.theme.endColor.opacity(0.4), radius: 8, x: 0, y: 4)
+            }
+            .buttonStyle(ScaleButtonStyle())
+            .disabled(questionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .opacity(questionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.4 : 1)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(.bar)
+    }
+
+    /// Resigns the on-screen keyboard. Clears the FocusState binding and also
+    /// forces first-responder resignation as a safety net, since a vertical-axis
+    /// TextField can occasionally ignore the FocusState change on its own.
+    private func dismissKeyboard() {
+        isInputFocused = false
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    }
+
+    private func sendQuestion() {
+        let trimmed = questionText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        dismissKeyboard()
+        didAsk.toggle()
+        questionText = ""
+
+        withAnimation(.snappy) {
+            messages.append(ChatMessage(kind: .userQuestion(trimmed)))
+        }
+
+        switch settings.answerMode {
+        case .jumpAndHighlight:
+            if let result = QuestionAnswerer.answer(for: trimmed, in: notesStore.notes) {
+                let noteTitle = result.matchedNote.title.isEmpty ? "Untitled" : result.matchedNote.title
+                withAnimation(.snappy) {
+                    messages.append(ChatMessage(kind: .plainText("Found it in \"\(noteTitle)\" — opening now.")))
+                }
+                path.append(AskDestination(noteID: result.matchedNote.id, highlight: result.extractedAnswer))
+            } else {
+                withAnimation(.snappy) {
+                    messages.append(ChatMessage(kind: .plainText("I couldn't find an answer to that in your notes. Try different words or add more detail.")))
+                }
+            }
+
+        case .aiAnswer:
+            let thinkingID = UUID()
+            withAnimation(.snappy) {
+                messages.append(ChatMessage(id: thinkingID, kind: .plainText("Thinking…")))
+            }
+            let searchSeed = (conversationHistory.suffix(2).map { $0.text } + [trimmed]).joined(separator: " ")
+            let topMatchedNotes = QuestionAnswerer.topMatchingNotes(for: searchSeed, in: notesStore.notes)
+            let allNotes = notesStore.notes
+            let historySnapshot = conversationHistory
+            Task {
+                let rawText = settings.useOnlineAI
+                    ? await OnlineAI.answer(question: trimmed, relevantNotes: allNotes, apiKey: settings.deepSeekAPIKey, history: historySnapshot, notePattern: settings.notePattern)
+                    : await LocalAI.shared.answer(question: trimmed, relevantNotes: topMatchedNotes)
+
+                let parsed = AIProtocol.parse(rawText)
+                var replyText = parsed.reply
+                var pendingUndo: PendingUndoAction? = nil
+                var pendingDelete: Note? = nil
+                var sourcedKind: ChatMessage.Kind? = nil
+
+                switch parsed.action {
+                case "create_note":
+                    let title = (parsed.title?.isEmpty == false) ? parsed.title! : "Untitled"
+                    var newNote = Note(title: title, body: parsed.content ?? "")
+                    newNote.categoryEnglish = parsed.categoryEnglish ?? ""
+                    newNote.categoryKurdish = parsed.categoryKurdish ?? ""
+                    if let dateString = parsed.reminderDate {
+                        if let parsedDate = AIProtocol.reminderDateFormatter.date(from: dateString) {
+                            newNote.reminderDate = parsedDate
+                        } else {
+                            replyText += " (I couldn't understand the reminder time, so no reminder was set — try rephrasing it.)"
+                        }
+                    }
+                    notesStore.add(newNote)
+                    pendingUndo = .removeNote(newNote.id)
+
+                case "update_note":
+                    if let targetText = parsed.target,
+                       let match = QuestionAnswerer.bestMatchingNote(for: targetText, in: notesStore.notes) {
+                        let original = match
+                        var updated = match
+                        updated.body = parsed.content ?? match.body
+                        if let newTitle = parsed.title, !newTitle.isEmpty { updated.title = newTitle }
+                        if let categoryEnglish = parsed.categoryEnglish { updated.categoryEnglish = categoryEnglish }
+                        if let categoryKurdish = parsed.categoryKurdish { updated.categoryKurdish = categoryKurdish }
+                        updated.dateModified = Date()
+                        notesStore.update(updated)
+                        pendingUndo = .restoreNote(original)
+                    } else {
+                        replyText = "I couldn't figure out which note to update. Try naming it more specifically."
+                    }
+
+                case "delete_note":
+                    if let targetText = parsed.target,
+                       let match = QuestionAnswerer.bestMatchingNote(for: targetText, in: notesStore.notes) {
+                        pendingDelete = match
+                    } else {
+                        replyText = "I couldn't figure out which note to delete. Try naming it more specifically."
+                    }
+
+                case "set_reminder":
+                    if let targetText = parsed.target,
+                       let match = QuestionAnswerer.bestMatchingNote(for: targetText, in: notesStore.notes) {
+                        let original = match
+                        var updated = match
+                        if let dateString = parsed.reminderDate {
+                            if let parsedDate = AIProtocol.reminderDateFormatter.date(from: dateString) {
+                                updated.reminderDate = parsedDate
+                            } else {
+                                replyText += " (I couldn't understand the reminder time, so the date wasn't changed — try rephrasing it.)"
+                            }
+                        }
+                        if let done = parsed.reminderDone {
+                            updated.isReminderCompleted = done
+                        }
+                        updated.dateModified = Date()
+                        notesStore.update(updated)
+                        pendingUndo = .restoreNote(original)
+                    } else {
+                        replyText = "I couldn't figure out which note to set a reminder on. Try naming it more specifically."
+                    }
+
+                case "set_category":
+                    if let targetText = parsed.target,
+                       let match = QuestionAnswerer.bestMatchingNote(for: targetText, in: notesStore.notes) {
+                        let original = match
+                        var updated = match
+                        if let categoryEnglish = parsed.categoryEnglish { updated.categoryEnglish = categoryEnglish }
+                        if let categoryKurdish = parsed.categoryKurdish { updated.categoryKurdish = categoryKurdish }
+                        updated.dateModified = Date()
+                        notesStore.update(updated)
+                        pendingUndo = .restoreNote(original)
+                    } else {
+                        replyText = "I couldn't figure out which note to categorize. Try naming it more specifically."
+                    }
+
+                default:
+                    sourcedKind = buildSourcedAnswerKind(parsed: parsed, replyText: replyText)
+                }
+
+                conversationHistory.append(ConversationTurn(role: "user", text: trimmed))
+                conversationHistory.append(ConversationTurn(role: "model", text: replyText))
+                if conversationHistory.count > 20 {
+                    conversationHistory = Array(conversationHistory.suffix(20))
+                }
+
+                if let index = messages.firstIndex(where: { $0.id == thinkingID }) {
+                    withAnimation(.snappy) {
+                        if let pendingDelete {
+                            messages[index] = ChatMessage(id: thinkingID, kind: .confirmDelete(note: pendingDelete))
+                        } else if let sourcedKind {
+                            messages[index] = ChatMessage(id: thinkingID, kind: sourcedKind)
+                        } else {
+                            messages[index] = ChatMessage(id: thinkingID, kind: .actionResult(text: replyText, undo: pendingUndo))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Tries to build a colored, source-attributed answer from the AI's segments.
+    /// Falls back to nil (plain text) if the segments don't reconstruct the reply exactly,
+    /// or don't resolve to any real notes — so a slip-up from the AI never breaks the answer.
+    private func buildSourcedAnswerKind(parsed: AIActionResponse, replyText: String) -> ChatMessage.Kind? {
+        guard !parsed.segments.isEmpty else { return nil }
+
+        // Sanity check instead of requiring an exact character match: the model's "reply" and
+        // "segments" fields are generated somewhat independently, so tiny punctuation/spacing
+        // differences between them are common and shouldn't kill the whole highlight feature.
+        // Only bail out if segments look suspiciously incomplete compared to the reply.
+        let reconstructedLength = parsed.segments.reduce(0) { $0 + $1.text.count }
+        guard Double(reconstructedLength) >= Double(replyText.count) * 0.6 else { return nil }
+
+        var seenTitles: [String] = []
+        for segment in parsed.segments {
+            if let title = segment.sourceNote, !title.isEmpty, !seenTitles.contains(title) {
+                seenTitles.append(title)
+            }
+        }
+
+        var pool = AppTheme.allCases.filter { $0 != settings.theme }.shuffled()
+        if pool.isEmpty { pool = AppTheme.allCases.shuffled() }
+
+        var titleToTheme: [String: AppTheme] = [:]
+        var titleToNoteID: [String: UUID] = [:]
+        var chips: [SourceNoteChip] = []
+
+        for (index, title) in seenTitles.enumerated() {
+            guard let note = QuestionAnswerer.bestMatchingNote(for: title, in: notesStore.notes) else { continue }
+            let theme = pool[index % pool.count]
+            titleToTheme[title] = theme
+            titleToNoteID[title] = note.id
+            chips.append(SourceNoteChip(id: note.id, title: note.title.isEmpty ? "Untitled" : note.title, theme: theme))
+        }
+
+        let resolvedSegments: [ResolvedAnswerSegment] = parsed.segments.compactMap { segment in
+            guard !segment.text.isEmpty else { return nil }
+            let noteID = segment.sourceNote.flatMap { titleToNoteID[$0] }
+            // A copyable value still gets a theme color to render its box, even if it didn't
+            // resolve to a real note — falls back to the app's current theme in that case.
+            let theme = segment.sourceNote.flatMap { titleToTheme[$0] } ?? (segment.isValue ? settings.theme : nil)
+            let showTheme = (noteID != nil || segment.isValue) ? theme : nil
+            return ResolvedAnswerSegment(text: segment.text, noteID: noteID, excerpt: segment.sourceExcerpt, theme: showTheme, isValue: segment.isValue)
+        }
+        guard !resolvedSegments.isEmpty else { return nil }
+
+        // Worth the rich rendering if we resolved at least one source chip, or there's a copyable value.
+        guard !chips.isEmpty || resolvedSegments.contains(where: { $0.isValue }) else { return nil }
+
+        return .sourcedAnswer(chips: chips, segments: resolvedSegments)
+    }
+}
+
+struct AnswerCardView: View {
+    @EnvironmentObject var settings: SettingsStore
+    let result: AnswerResult
+    let onTapNote: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "sparkles")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 24, height: 24)
+                    .background(settings.theme.gradient, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                Text("Answer")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+
+            Text(result.sentence)
+                .font(.body)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Button(action: onTapNote) {
+                HStack(spacing: 8) {
+                    Image(systemName: "note.text")
+                        .foregroundStyle(settings.theme.endColor)
+                    Text(result.matchedNote.title.isEmpty ? "Untitled" : result.matchedNote.title)
+                        .lineLimit(1)
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(16)
+        .cardBackground()
+    }
+}
+
+// MARK: - Settings tab
+
+struct SettingsView: View {
+    @EnvironmentObject var settings: SettingsStore
+    @EnvironmentObject var notesStore: NotesStore
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var pendingExportURL: URL?
+    @State private var showingImporter = false
+    @State private var importStatusMessage: String?
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    // Answering style
+                    VStack(alignment: .leading, spacing: 12) {
+                        sectionHeader("Answering Style", systemImage: "sparkles")
+
+                        ForEach(AnswerMode.allCases) { mode in
+                            Button {
+                                withAnimation(.snappy) { settings.answerMode = mode }
+                            } label: {
+                                HStack(alignment: .top, spacing: 14) {
+                                    Image(systemName: mode == .aiAnswer ? "sparkles" : "arrow.right.circle.fill")
+                                        .font(.system(size: 15, weight: .semibold))
+                                        .foregroundStyle(.white)
+                                        .frame(width: 38, height: 38)
+                                        .background(settings.theme.gradient, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(mode.displayName)
+                                            .font(.headline)
+                                            .foregroundStyle(.primary)
+                                        Text(mode.explanation)
+                                            .font(.subheadline)
+                                            .foregroundStyle(.secondary)
+                                            .multilineTextAlignment(.leading)
+                                    }
+
+                                    Spacer(minLength: 0)
+
+                                    Image(systemName: settings.answerMode == mode ? "checkmark.circle.fill" : "circle")
+                                        .foregroundStyle(settings.answerMode == mode ? settings.theme.endColor : Color.secondary.opacity(0.35))
+                                        .font(.title3)
+                                }
+                                .padding(16)
+                                .cardBackground()
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: Layout.cornerRadius, style: .continuous)
+                                        .stroke(settings.answerMode == mode ? settings.theme.endColor : Color.clear, lineWidth: 2)
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+
+                    // AI engine
+                    VStack(alignment: .leading, spacing: 12) {
+                        sectionHeader("AI Engine", systemImage: "cpu")
+
+                        VStack(alignment: .leading, spacing: 12) {
+                            Picker("AI Engine", selection: $settings.useOnlineAI) {
+                                Text("Offline AI").tag(false)
+                                Text("Online AI (Gemini)").tag(true)
+                            }
+                            .pickerStyle(.segmented)
+
+                            if settings.useOnlineAI {
+                                SecureField("Gemini API key", text: $settings.deepSeekAPIKey)
+                                    .textFieldStyle(.roundedBorder)
+                                    .autocorrectionDisabled()
+                                    .textInputAutocapitalization(.never)
+
+                                Text("Uses your own free Gemini API key over WiFi instead of the bundled offline model. Free tier has rate limits, and Google may use free-tier requests to improve their models.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .padding(16)
+                        .cardBackground()
+                    }
+
+                    // Note writing pattern
+                    VStack(alignment: .leading, spacing: 12) {
+                        sectionHeader("Note Writing Pattern", systemImage: "text.format")
+
+                        VStack(alignment: .leading, spacing: 12) {
+                            TextEditor(text: $settings.notePattern)
+                                .frame(minHeight: 90)
+                                .padding(8)
+                                .background(Color(.secondarySystemBackground))
+                                .clipShape(RoundedRectangle(cornerRadius: 10))
+
+                            Text("Give an example of how you like notes written, e.g. \"10/10/2025 Abc Restaurant entry = 20$\" — new notes the AI creates will follow that style. Currently used by Online AI only.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(16)
+                        .cardBackground()
+                    }
+
+                    // Theme
+                    VStack(alignment: .leading, spacing: 12) {
+                        sectionHeader("Theme", systemImage: "paintpalette")
+
+                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                            ForEach(AppTheme.allCases) { theme in
+                                Button {
+                                    withAnimation(.snappy) { settings.theme = theme }
+                                } label: {
+                                    VStack(spacing: 8) {
+                                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                            .fill(theme.gradient)
+                                            .frame(height: 48)
+                                            .overlay(alignment: .bottomLeading) {
+                                                VStack(alignment: .leading, spacing: 4) {
+                                                    Capsule().fill(.white.opacity(0.85)).frame(width: 34, height: 5)
+                                                    Capsule().fill(.white.opacity(0.5)).frame(width: 52, height: 5)
+                                                }
+                                                .padding(8)
+                                            }
+                                            .overlay(alignment: .topTrailing) {
+                                                if settings.theme == theme {
+                                                    Image(systemName: "checkmark.circle.fill")
+                                                        .foregroundStyle(.white)
+                                                        .padding(6)
+                                                }
+                                            }
+                                        Text(theme.displayName)
+                                            .font(.subheadline.weight(.medium))
+                                            .foregroundStyle(.primary)
+                                    }
+                                    .padding(12)
+                                    .cardBackground()
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: Layout.cornerRadius, style: .continuous)
+                                            .stroke(settings.theme == theme ? theme.endColor : Color.clear, lineWidth: 2)
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+
+                    // Backup
+                    VStack(alignment: .leading, spacing: 12) {
+                        sectionHeader("Backup", systemImage: "externaldrive")
+
+                        VStack(alignment: .leading, spacing: 12) {
+                            Button {
+                                prepareExport()
+                            } label: {
+                                actionRowLabel("Export All Notes", systemImage: "square.and.arrow.up")
+                            }
+                            .buttonStyle(.plain)
+
+                            if let pendingExportURL {
+                                ShareLink(item: pendingExportURL) {
+                                    actionRowLabel("Share Backup File", systemImage: "arrow.up.doc")
+                                }
+                            }
+
+                            Divider()
+
+                            Button {
+                                showingImporter = true
+                            } label: {
+                                actionRowLabel("Import Notes", systemImage: "square.and.arrow.down")
+                            }
+                            .buttonStyle(.plain)
+
+                            Text("Export saves all your notes to a file you can AirDrop, email, or save to iCloud Drive — keep it somewhere off the phone. After a reset or reinstall, use Import and pick that file to bring everything back. Importing never deletes existing notes; it only adds new ones and updates any that match.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+
+                            if let importStatusMessage {
+                                Text(importStatusMessage)
+                                    .font(.caption.weight(.medium))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .padding(16)
+                        .cardBackground()
+                    }
+                }
+                .padding(20)
+            }
+            .background(AmbientBackground())
+            .navigationTitle("Settings")
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
+            .fileImporter(isPresented: $showingImporter, allowedContentTypes: [.item]) { result in
+                handleImport(result)
+            }
+        }
+    }
+
+    private func sectionHeader(_ title: String, systemImage: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: systemImage)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.white)
+                .frame(width: 26, height: 26)
+                .background(settings.theme.gradient, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 4)
+    }
+
+    private func actionRowLabel(_ title: String, systemImage: String) -> some View {
+        Label(title, systemImage: systemImage)
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.primary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private func prepareExport() {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        guard let data = try? encoder.encode(notesStore.notes) else {
+            importStatusMessage = "Couldn't prepare the export file."
+            return
+        }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        let filename = "SahandInfoNotes-\(formatter.string(from: Date())).json"
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
+        do {
+            try data.write(to: url, options: .atomic)
+            pendingExportURL = url
+            importStatusMessage = nil
+        } catch {
+            importStatusMessage = "Couldn't prepare the export file."
+        }
+    }
+
+    private func handleImport(_ result: Result<URL, Error>) {
+        switch result {
+        case .success(let url):
+            let didStartAccessing = url.startAccessingSecurityScopedResource()
+            defer { if didStartAccessing { url.stopAccessingSecurityScopedResource() } }
+            do {
+                let data = try Data(contentsOf: url)
+                let decoded = try JSONDecoder().decode([Note].self, from: data)
+                guard !decoded.isEmpty else {
+                    importStatusMessage = "That file didn't contain any notes."
+                    return
+                }
+                var addedCount = 0
+                var updatedCount = 0
+                for imported in decoded {
+                    if notesStore.notes.contains(where: { $0.id == imported.id }) {
+                        notesStore.update(imported)
+                        updatedCount += 1
+                    } else {
+                        notesStore.add(imported)
+                        addedCount += 1
+                    }
+                }
+                var summary = "Imported \(addedCount) new note\(addedCount == 1 ? "" : "s")."
+                if updatedCount > 0 {
+                    summary += " Updated \(updatedCount) existing note\(updatedCount == 1 ? "" : "s")."
+                }
+                importStatusMessage = summary
+            } catch {
+                importStatusMessage = "That file couldn't be read as a notes backup."
+            }
+        case .failure:
+            importStatusMessage = "Import was cancelled or failed."
+        }
+    }
+}
+
+// MARK: - Date (Reminders)
+
+enum DateFilterMode: Equatable {
+    case mostUrgent
+    case leastUrgent
+    case dateRange(Date, Date)
+    case completedOnly
+    case notCompletedOnly
+}
+
+struct DateView: View {
+    @EnvironmentObject var notesStore: NotesStore
+    @EnvironmentObject var settings: SettingsStore
+
+    @State private var filter: DateFilterMode = .mostUrgent
+    @State private var showingDateRangeSheet = false
+    @State private var rangeStart = Date()
+    @State private var rangeEnd = Date().addingTimeInterval(7 * 24 * 60 * 60)
+    @State private var path: [NotesListView.NoteDestination] = []
+    @State private var categoryFilter: String? = nil
+
+    private var isDateRangeSelected: Bool {
+        if case .dateRange = filter { return true }
+        return false
+    }
+
+    private var availableCategories: [String] {
+        Set(notesStore.notes.filter { $0.reminderDate != nil }.map { $0.categoryEnglish }.filter { !$0.isEmpty }).sorted()
+    }
+
+    private var reminderNotes: [Note] {
+        var withReminders = notesStore.notes.filter { $0.reminderDate != nil }
+        if let categoryFilter {
+            withReminders = withReminders.filter { $0.categoryEnglish == categoryFilter }
+        }
+        switch filter {
+        case .mostUrgent:
+            return withReminders.sorted { $0.reminderDate! < $1.reminderDate! }
+        case .leastUrgent:
+            return withReminders.sorted { $0.reminderDate! > $1.reminderDate! }
+        case .dateRange(let start, let end):
+            return withReminders
+                .filter { $0.reminderDate! >= start && $0.reminderDate! <= end }
+                .sorted { $0.reminderDate! < $1.reminderDate! }
+        case .completedOnly:
+            return withReminders.filter { $0.isReminderCompleted }.sorted { $0.reminderDate! < $1.reminderDate! }
+        case .notCompletedOnly:
+            return withReminders.filter { !$0.isReminderCompleted }.sorted { $0.reminderDate! < $1.reminderDate! }
+        }
+    }
+
+    var body: some View {
+        NavigationStack(path: $path) {
+            VStack(spacing: 0) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        SelectablePill(title: "Most urgent", systemImage: "flame.fill", isSelected: filter == .mostUrgent) {
+                            withAnimation(.snappy) { filter = .mostUrgent }
+                        }
+                        SelectablePill(title: "Least urgent", isSelected: filter == .leastUrgent) {
+                            withAnimation(.snappy) { filter = .leastUrgent }
+                        }
+                        SelectablePill(title: "Date range", systemImage: "calendar", isSelected: isDateRangeSelected) {
+                            showingDateRangeSheet = true
+                        }
+                        SelectablePill(title: "Done", systemImage: "checkmark.circle", isSelected: filter == .completedOnly) {
+                            withAnimation(.snappy) { filter = .completedOnly }
+                        }
+                        SelectablePill(title: "Not done", systemImage: "circle", isSelected: filter == .notCompletedOnly) {
+                            withAnimation(.snappy) { filter = .notCompletedOnly }
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                }
+
+                if !availableCategories.isEmpty {
+                    CategoryChipsRow(categories: availableCategories, selection: $categoryFilter, allLabel: "All Categories")
+                }
+
+                Group {
+                    if reminderNotes.isEmpty {
+                        ContentUnavailableView {
+                            Label("No Reminders", systemImage: "calendar")
+                        } description: {
+                            Text("Ask the AI to remind you about a note, and it'll show up here.")
+                        }
+                    } else {
+                        List {
+                            ForEach(Array(reminderNotes.enumerated()), id: \.element.id) { index, note in
+                                Button {
+                                    path.append(NotesListView.NoteDestination(id: note.id))
+                                } label: {
+                                    reminderRow(note: note, urgencyColor: urgencyColor(index: index, total: reminderNotes.count))
+                                }
+                                .buttonStyle(.plain)
+                                .listRowSeparator(.hidden)
+                                .listRowBackground(Color.clear)
+                                .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                            }
+                        }
+                        .listStyle(.plain)
+                        .scrollContentBackground(.hidden)
+                        .animation(.snappy, value: reminderNotes)
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .background(AmbientBackground())
+            .navigationTitle("Date")
+            .sheet(isPresented: $showingDateRangeSheet) {
+                dateRangeSheet
+            }
+            .navigationDestination(for: NotesListView.NoteDestination.self) { dest in
+                NoteDetailView(noteID: dest.id)
+            }
+        }
+    }
+
+    private var dateRangeSheet: some View {
+        NavigationStack {
+            Form {
+                DatePicker("From", selection: $rangeStart, displayedComponents: [.date, .hourAndMinute])
+                DatePicker("To", selection: $rangeEnd, displayedComponents: [.date, .hourAndMinute])
+            }
+            .navigationTitle("Date Range")
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Apply") {
+                        filter = .dateRange(rangeStart, rangeEnd)
+                        showingDateRangeSheet = false
+                    }
+                }
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Cancel") { showingDateRangeSheet = false }
+                }
+            }
+        }
+        .presentationDetents([.medium])
+    }
+
+    private func reminderRow(note: Note, urgencyColor: Color) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Button {
+                toggleCompleted(note)
+            } label: {
+                Image(systemName: note.isReminderCompleted ? "checkmark.circle.fill" : "circle")
+                    .font(.title3)
+                    .foregroundStyle(note.isReminderCompleted ? Color.secondary : urgencyColor)
+            }
+            .buttonStyle(.plain)
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text(note.title.isEmpty ? "Untitled" : note.title)
+                    .font(.headline)
+                    .fontDesign(.rounded)
+                    .foregroundStyle(note.isReminderCompleted ? .secondary : .primary)
+                    .strikethrough(note.isReminderCompleted)
+
+                Text(note.previewText)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+
+                if let date = note.reminderDate {
+                    Label(reminderDateFormatter.string(from: date), systemImage: "calendar")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(note.isReminderCompleted ? Color.secondary : urgencyColor)
+                }
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(16)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(urgencyColor.opacity(note.isReminderCompleted ? 0 : 0.6), lineWidth: 1.5)
+        )
+        .shadow(color: urgencyColor.opacity(note.isReminderCompleted ? 0 : 0.3), radius: 12, x: 0, y: 4)
+    }
+
+    private func toggleCompleted(_ note: Note) {
+        var updated = note
+        updated.isReminderCompleted.toggle()
+        notesStore.update(updated)
+    }
+
+    private func urgencyColor(index: Int, total: Int) -> Color {
+        guard total > 1 else { return Color(red: 1.0, green: 0.23, blue: 0.19) }
+        let t = Double(index) / Double(total - 1) // 0 = most urgent ... 1 = least urgent
+
+        let red = (r: 1.0, g: 0.23, b: 0.19)
+        let yellow = (r: 1.0, g: 0.80, b: 0.0)
+        let green = (r: 0.20, g: 0.78, b: 0.35)
+
+        func lerp(_ a: Double, _ b: Double, _ t: Double) -> Double { a + (b - a) * t }
+
+        if t <= 0.5 {
+            let local = t / 0.5
+            return Color(red: lerp(red.r, yellow.r, local), green: lerp(red.g, yellow.g, local), blue: lerp(red.b, yellow.b, local))
+        } else {
+            let local = (t - 0.5) / 0.5
+            return Color(red: lerp(yellow.r, green.r, local), green: lerp(yellow.g, green.g, local), blue: lerp(yellow.b, green.b, local))
+        }
+    }
+
+    private var reminderDateFormatter: DateFormatter {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter
+    }
+}
+
+// MARK: - Root
+
+struct ContentView: View {
+    @EnvironmentObject var settings: SettingsStore
+
+    var body: some View {
+        TabView {
+            NotesListView()
+                .tabItem { Label("Notes", systemImage: "note.text") }
+            AskView()
+                .tabItem { Label("Ask", systemImage: "sparkles") }
+            DateView()
+                .tabItem { Label("Date", systemImage: "calendar") }
+        }
+        .tint(settings.theme.endColor)
+    }
+}
+
+@main
+struct SahandInfoApp: App {
+    @StateObject private var notesStore = NotesStore()
+    @StateObject private var settings = SettingsStore()
+
+    var body: some Scene {
+        WindowGroup {
+            ContentView()
+                .environmentObject(notesStore)
+                .environmentObject(settings)
+        }
+    }
+}
